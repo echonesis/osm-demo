@@ -1,0 +1,14 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    restart: always
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"  # Use 3000 for local, Zeabur/host will handle HTTPS in production
+    depends_on:
+      - backend
+    restart: always
