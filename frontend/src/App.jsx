@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Button, TextField, Box, Typography, Paper, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Button, TextField, Box, Typography, Paper, ToggleButton, ToggleButtonGroup, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, Circle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import EditIcon from '@mui/icons-material/Edit';
@@ -267,6 +267,30 @@ function App() {
     }
   }, [view]);
 
+  // Add continuous position tracking every 5 seconds
+  useEffect(() => {
+    if (view === 'map' && navigator.geolocation) {
+      const watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          setPosition([pos.coords.latitude, pos.coords.longitude]);
+        },
+        (error) => {
+          console.log('Position tracking error:', error);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 5000 // Update every 5 seconds
+        }
+      );
+
+      // Cleanup function to stop watching when component unmounts or view changes
+      return () => {
+        navigator.geolocation.clearWatch(watchId);
+      };
+    }
+  }, [view]);
+
   useEffect(() => {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(layerData));
   }, [layerData]);
@@ -321,43 +345,61 @@ function App() {
             {layerKeys.length}/10 layers
           </Typography>
         </Box>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <ToggleButtonGroup
-            value={layer}
-            exclusive
-            onChange={handleLayerChange}
-            sx={{ mb: 2, pl: 2 }}
-          >
-            {layerKeys.map(key => (
-              <ToggleButton key={key} value={key} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {editingLayer === key ? (
-                  <>
-                    <TextField
-                      value={editingLayerName}
-                      onChange={e => setEditingLayerName(e.target.value)}
-                      size="small"
-                      sx={{ width: 100 }}
-                      autoFocus
-                    />
-                    <Button size="small" onClick={() => handleSaveEditLayer(key)} disabled={!editingLayerName.trim() || layerKeys.includes(editingLayerName.trim().toLowerCase().replace(/\s+/g, '_'))}><SaveIcon fontSize="small" /></Button>
-                    <Button size="small" onClick={handleCancelEditLayer}><CloseIcon fontSize="small" /></Button>
-                  </>
-                ) : (
-                  <>
-                    {key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}
-                    <Button size="small" onClick={e => { e.stopPropagation(); handleStartEditLayer(key); }}><EditIcon fontSize="small" /></Button>
-                    {layer === key && (
-                      <Button size="small" onClick={e => { e.stopPropagation(); handleCopyLayer(); }}><ContentCopyIcon fontSize="small" /></Button>
-                    )}
-                    {layerKeys.length > 1 && (
-                      <Button size="small" color="error" onClick={e => { e.stopPropagation(); handleDeleteLayer(key); }}><DeleteIcon fontSize="small" /></Button>
-                    )}
-                  </>
-                )}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
+        
+        {/* Layer Selection Dropdown */}
+        <Box sx={{ display: 'flex', alignItems: 'center', pl: 2, mb: 2 }}>
+          <FormControl sx={{ minWidth: 200 }}>
+            <InputLabel>Select Layer</InputLabel>
+            <Select
+              value={layer}
+              label="Select Layer"
+              onChange={(e) => setLayer(e.target.value)}
+            >
+              {layerKeys.map(key => (
+                <MenuItem key={key} value={key}>
+                  {key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ')}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
+
+        {/* Layer Management Functions */}
+        <Box sx={{ display: 'flex', alignItems: 'center', pl: 2, mb: 2, gap: 1 }}>
+          {editingLayer === layer ? (
+            <>
+              <TextField
+                value={editingLayerName}
+                onChange={e => setEditingLayerName(e.target.value)}
+                size="small"
+                sx={{ width: 150 }}
+                autoFocus
+                label="New Layer Name"
+              />
+              <Button component="span" size="small" variant="contained" onClick={() => handleSaveEditLayer(layer)} disabled={!editingLayerName.trim() || layerKeys.includes(editingLayerName.trim().toLowerCase().replace(/\s+/g, '_'))}>
+                <SaveIcon fontSize="small" /> Save
+              </Button>
+              <Button component="span" size="small" variant="outlined" onClick={handleCancelEditLayer}>
+                <CloseIcon fontSize="small" /> Cancel
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button component="span" size="small" variant="outlined" onClick={() => handleStartEditLayer(layer)}>
+                <EditIcon fontSize="small" /> Modify Layer Name
+              </Button>
+              <Button component="span" size="small" variant="outlined" onClick={handleCopyLayer}>
+                <ContentCopyIcon fontSize="small" /> Copy Layer
+              </Button>
+              {layerKeys.length > 1 && (
+                <Button component="span" size="small" variant="outlined" color="error" onClick={() => handleDeleteLayer(layer)}>
+                  <DeleteIcon fontSize="small" /> Delete Layer
+                </Button>
+              )}
+            </>
+          )}
+        </Box>
+        
         {locating && <Typography sx={{ pl: 2 }}>Locating...</Typography>}
         <Box sx={{ height: '80vh', width: '100vw', maxWidth: '100vw', mt: 2 }}>
           <MapContainer
