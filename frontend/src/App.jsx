@@ -58,10 +58,7 @@ function App() {
   const [error, setError] = useState('');
   const [position, setPosition] = useState(null);
   const [locating, setLocating] = useState(false);
-  const [layerData, setLayerData] = useState(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : DEFAULT_LAYERS;
-  });
+  const [layerData, setLayerData] = useState({});
   const [layer, setLayer] = useState('food');
   const [newLayer, setNewLayer] = useState('');
   const layerKeys = Object.keys(layerData);
@@ -248,6 +245,41 @@ function App() {
     }
   };
 
+  // Helper to get token
+  const getToken = () => localStorage.getItem('token');
+
+  // Fetch layers from backend after login
+  useEffect(() => {
+    if (view === 'map' && getToken()) {
+      fetch(`${API_URL}/api/layers`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          setLayerData(data);
+          const keys = Object.keys(data);
+          if (keys.length > 0 && !keys.includes(layer)) {
+            setLayer(keys[0]);
+          }
+        })
+        .catch(err => console.error('Failed to fetch layers:', err));
+    }
+  }, [view]);
+
+  // Save layers to backend whenever layerData changes (but only if on map view)
+  useEffect(() => {
+    if (view === 'map' && getToken()) {
+      fetch(`${API_URL}/api/layers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
+        body: JSON.stringify(layerData)
+      }).catch(err => console.error('Failed to save layers:', err));
+    }
+  }, [layerData, view]);
+
   useEffect(() => {
     if (view === 'map') {
       setLocating(true);
@@ -291,10 +323,6 @@ function App() {
     }
   }, [view]);
 
-  useEffect(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(layerData));
-  }, [layerData]);
-
   if (view === 'map') {
     const handleSignOut = () => {
       localStorage.removeItem('token');
@@ -327,7 +355,7 @@ function App() {
         )}
         <Box sx={{ display: 'flex', alignItems: 'center', pl: 2, mb: 2, gap: 1 }}>
           <TextField
-            label="Add Layer"
+            label="Create a New Layer"
             size="small"
             value={newLayer}
             onChange={e => setNewLayer(e.target.value)}
@@ -424,7 +452,7 @@ function App() {
                 />
               </>
             )}
-            {layerData[layer].map(item => (
+            {Array.isArray(layerData[layer]) && layerData[layer].map(item => (
               <Marker key={item.id} position={item.position}>
                 <Popup>
                   <Box>

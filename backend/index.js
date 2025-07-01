@@ -14,6 +14,21 @@ app.use(bodyParser.json());
 // Placeholder user store (in-memory)
 const users = [];
 
+// In-memory layer store: { [email]: layers }
+const userLayers = {};
+
+// Middleware to authenticate JWT and set req.user
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+}
+
 // Register route
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
@@ -41,6 +56,36 @@ app.post('/api/login', async (req, res) => {
   }
   const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: '1h' });
   res.json({ token });
+});
+
+// Get layers for logged-in user
+app.get('/api/layers', authenticateToken, (req, res) => {
+  const email = req.user.email;
+  if (!userLayers[email]) {
+    // Default layers if none exist
+    userLayers[email] = {
+      food: [
+        { id: 1, name: 'Pizza Place', position: [25.034, 121.564] },
+        { id: 2, name: 'Sushi Bar', position: [25.035, 121.565] },
+      ],
+      playground: [
+        { id: 1, name: 'Central Playground', position: [25.033, 121.563] },
+        { id: 2, name: 'Riverside Park', position: [25.032, 121.566] },
+      ],
+    };
+  }
+  res.json(userLayers[email]);
+});
+
+// Replace all layers for logged-in user
+app.post('/api/layers', authenticateToken, (req, res) => {
+  const email = req.user.email;
+  const layers = req.body;
+  if (!layers || typeof layers !== 'object') {
+    return res.status(400).json({ message: 'Invalid layers data' });
+  }
+  userLayers[email] = layers;
+  res.json({ message: 'Layers updated' });
 });
 
 app.listen(PORT, () => {
