@@ -17,6 +17,13 @@ const users = [];
 // In-memory layer store: { [email]: layers }
 const userLayers = {};
 
+// In-memory friend link requests: { [email]: [requestingEmail, ...] }
+const friendRequests = {};
+// In-memory notifications: { [email]: [message, ...] }
+const notifications = {};
+// In-memory sharing status: { [email]: { sharing: boolean, position: [lat, lng], sharedWith: Set<email> } }
+const sharingStatus = {};
+
 // Middleware to authenticate JWT and set req.user
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
@@ -40,6 +47,17 @@ app.post('/api/register', async (req, res) => {
   }
   const hashedPassword = await bcrypt.hash(password, 10);
   users.push({ email, password: hashedPassword });
+  // Initialize default layers for new user
+  userLayers[email] = {
+    food: [
+      { id: 1, name: 'Pizza Place', position: [25.034, 121.564] },
+      { id: 2, name: 'Sushi Bar', position: [25.035, 121.565] },
+    ],
+    playground: [
+      { id: 1, name: 'Central Playground', position: [25.033, 121.563] },
+      { id: 2, name: 'Riverside Park', position: [25.032, 121.566] },
+    ],
+  };
   res.json({ message: 'Registration successful' });
 });
 
@@ -86,6 +104,64 @@ app.post('/api/layers', authenticateToken, (req, res) => {
   }
   userLayers[email] = layers;
   res.json({ message: 'Layers updated' });
+});
+
+// Send a link request to another user
+app.post('/api/link-request', authenticateToken, (req, res) => {
+  const fromEmail = req.user.email;
+  const { toEmail } = req.body;
+  if (!toEmail || !users.find(u => u.email === toEmail)) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  if (!friendRequests[toEmail]) friendRequests[toEmail] = [];
+  friendRequests[toEmail].push(fromEmail);
+  if (!notifications[toEmail]) notifications[toEmail] = [];
+  notifications[toEmail].push(`${fromEmail} wants to link and see your position.`);
+  res.json({ message: 'Link request sent' });
+});
+
+// Get notifications for the logged-in user
+app.get('/api/notifications', authenticateToken, (req, res) => {
+  const email = req.user.email;
+  const notes = notifications[email] || [];
+  notifications[email] = [];
+  res.json(notes);
+});
+
+// User accepts link and starts sharing position
+app.post('/api/share-position', authenticateToken, (req, res) => {
+  const email = req.user.email;
+  const { toEmail, position, sharing } = req.body;
+  if (!toEmail || !users.find(u => u.email === toEmail)) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  if (!sharingStatus[email]) sharingStatus[email] = { sharing: false, position: null, sharedWith: new Set() };
+  sharingStatus[email].sharing = !!sharing;
+  sharingStatus[email].position = position || sharingStatus[email].position;
+  if (sharing) {
+    sharingStatus[email].sharedWith.add(toEmail);
+    // Notify the requester that sharing was approved
+    if (!notifications[toEmail]) notifications[toEmail] = [];
+    notifications[toEmail].push(`${email} approved your request`);
+  } else {
+    sharingStatus[email].sharedWith.delete(toEmail);
+  }
+  res.json({ message: sharing ? 'Started sharing' : 'Stopped sharing' });
+});
+
+// Get friend's position if sharing
+app.get('/api/friend-position', authenticateToken, (req, res) => {
+  const email = req.user.email;
+  const { friendEmail } = req.query;
+  if (!friendEmail || !users.find(u => u.email === friendEmail)) {
+    return res.status(404).json({ message: 'User not found' });
+  }
+  const status = sharingStatus[friendEmail];
+  if (status && status.sharing && status.sharedWith.has(email) && status.position) {
+    res.json({ position: status.position });
+  } else {
+    res.status(403).json({ message: 'Not sharing position' });
+  }
 });
 
 app.listen(PORT, () => {

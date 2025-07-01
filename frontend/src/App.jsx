@@ -11,6 +11,10 @@ import L from 'leaflet';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
 
 // Sample data for layers
 const DEFAULT_LAYERS = {
@@ -71,6 +75,20 @@ function App() {
   const [editingLayer, setEditingLayer] = useState(null);
   const [editingLayerName, setEditingLayerName] = useState('');
   const [userMarkerRemoved, setUserMarkerRemoved] = useState(false);
+  const [mapCentered, setMapCentered] = useState(false);
+  const [friendEmail, setFriendEmail] = useState('');
+  const [notifications, setNotifications] = useState([]);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareRequester, setShareRequester] = useState(null);
+  const [friendPosition, setFriendPosition] = useState(null);
+  const [linkedFriend, setLinkedFriend] = useState(null);
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [pendingRequester, setPendingRequester] = useState(null);
+  const [showApprovedDialog, setShowApprovedDialog] = useState(false);
+  const [approvedBy, setApprovedBy] = useState('');
+  const [approvedByPosition, setApprovedByPosition] = useState(null);
+  const [connectedFriends, setConnectedFriends] = useState([]);
+  const [selectedFriend, setSelectedFriend] = useState('');
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -263,8 +281,17 @@ function App() {
           }
         })
         .catch(err => console.error('Failed to fetch layers:', err));
+      setMapCentered(false); // Reset map centering on login
     }
   }, [view]);
+
+  // Center map on user position after login (only once)
+  useEffect(() => {
+    if (view === 'map' && position && mapRef.current && !mapCentered) {
+      mapRef.current.setView(position, 15);
+      setMapCentered(true);
+    }
+  }, [view, position, mapCentered]);
 
   // Save layers to backend whenever layerData changes (but only if on map view)
   useEffect(() => {
@@ -323,6 +350,138 @@ function App() {
     }
   }, [view]);
 
+  // Poll for notifications every 5 seconds
+  useEffect(() => {
+    if (view === 'map' && getToken()) {
+      const interval = setInterval(() => {
+        fetch(`${API_URL}/api/notifications`, {
+          headers: { 'Authorization': `Bearer ${getToken()}` }
+        })
+          .then(res => res.json())
+          .then(async notes => {
+            setNotifications(notes);
+            // If a link request is present, set the requester and show dialog
+            const req = notes.find(n => n.includes('wants to link'));
+            if (req) {
+              const requester = req.split(' ')[0];
+              setPendingRequester(requester);
+              setShowLinkDialog(true);
+            }
+            // If an approval is present, show approval dialog and fetch position
+            const approval = notes.find(n => n.includes('approved your request'));
+            if (approval) {
+              const approver = approval.split(' ')[0];
+              setApprovedBy(approver);
+              setShowApprovedDialog(true);
+              // Fetch position from backend
+              try {
+                const res = await fetch(`${API_URL}/api/friend-position?friendEmail=${approver}`, {
+                  headers: { 'Authorization': `Bearer ${getToken()}` }
+                });
+                const data = await res.json();
+                setApprovedByPosition(data.position);
+                setFriendPosition(data.position); // Show on map immediately
+                setSelectedFriend(approver); // Select in dropdown
+                // Add to connected friends if not already present
+                setConnectedFriends(prev => prev.includes(approver) ? prev : [...prev, approver]);
+              } catch {
+                setApprovedByPosition(null);
+              }
+            }
+          })
+          .catch(() => {});
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [view]);
+
+  // When selecting a friend from dropdown, fetch their position
+  useEffect(() => {
+    if (view === 'map' && selectedFriend && getToken()) {
+      fetch(`${API_URL}/api/friend-position?friendEmail=${selectedFriend}`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` }
+      })
+        .then(res => res.json())
+        .then(data => setFriendPosition(data.position))
+        .catch(() => setFriendPosition(null));
+    }
+  }, [view, selectedFriend]);
+
+  // Accept link and start sharing position
+  const handleStartSharing = async () => {
+    setIsSharing(true);
+    await fetch(`${API_URL}/api/share-position`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify({ toEmail: pendingRequester, position, sharing: true })
+    });
+    setShowLinkDialog(false);
+    setPendingRequester(null);
+  };
+
+  // Reject link request
+  const handleRejectLink = () => {
+    setShowLinkDialog(false);
+    setPendingRequester(null);
+  };
+
+  // Poll for friend's position every 5 seconds if linked
+  useEffect(() => {
+    let interval;
+    if (view === 'map' && linkedFriend && getToken()) {
+      const fetchFriendPos = () => {
+        fetch(`${API_URL}/api/friend-position?friendEmail=${linkedFriend}`, {
+          headers: { 'Authorization': `Bearer ${getToken()}` }
+        })
+          .then(res => res.json())
+          .then(data => setFriendPosition(data.position))
+          .catch(() => setFriendPosition(null));
+      };
+      fetchFriendPos();
+      interval = setInterval(fetchFriendPos, 5000);
+    }
+    return () => interval && clearInterval(interval);
+  }, [view, linkedFriend]);
+
+  // Send link request
+  const handleLinkRequest = async () => {
+    if (!friendEmail) return;
+    const res = await fetch(`${API_URL}/api/link-request`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify({ toEmail: friendEmail })
+    });
+    const data = await res.json();
+    alert(data.message);
+    setFriendEmail('');
+  };
+
+  // Continuously update shared position if sharing is active
+  useEffect(() => {
+    let interval;
+    if (isSharing && pendingRequester && position && getToken()) {
+      const sendPosition = () => {
+        fetch(`${API_URL}/api/share-position`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${getToken()}`
+          },
+          body: JSON.stringify({ toEmail: pendingRequester, position, sharing: true })
+        });
+      };
+      sendPosition();
+      interval = setInterval(sendPosition, 5000);
+    }
+    return () => interval && clearInterval(interval);
+  }, [isSharing, pendingRequester, position]);
+
   if (view === 'map') {
     const handleSignOut = () => {
       localStorage.removeItem('token');
@@ -333,6 +492,37 @@ function App() {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pl: 2, pr: 2, pt: 2 }}>
           <Typography variant="h4" gutterBottom>Map</Typography>
           <Button variant="outlined" color="secondary" onClick={handleSignOut}>Sign Out</Button>
+        </Box>
+        {/* Link My Friends UI - directly below header */}
+        <Box sx={{ display: 'flex', alignItems: 'center', pl: 2, mb: 2, gap: 1 }}>
+          <TextField
+            label="Link My Friends (type email)"
+            size="small"
+            value={friendEmail}
+            onChange={e => setFriendEmail(e.target.value)}
+            sx={{ width: 220 }}
+          />
+          <Button variant="contained" onClick={handleLinkRequest} disabled={!friendEmail}>
+            Link
+          </Button>
+        </Box>
+        {/* Friend List Dropdown (like Layer Select) - directly below Link My Friends */}
+        <Box sx={{ display: 'flex', alignItems: 'center', pl: 2, mb: 2, gap: 1 }}>
+          <Typography sx={{ mr: 1 }}>Friend List:</Typography>
+          <Select
+            value={selectedFriend}
+            onChange={e => setSelectedFriend(e.target.value)}
+            displayEmpty
+            sx={{ minWidth: 220 }}
+            disabled={connectedFriends.length === 0}
+          >
+            <MenuItem value="" disabled>
+              {connectedFriends.length === 0 ? 'No friends connected' : 'Select a friend'}
+            </MenuItem>
+            {connectedFriends.map(email => (
+              <MenuItem key={email} value={email}>{email}</MenuItem>
+            ))}
+          </Select>
         </Box>
         <Box sx={{ display: 'flex', alignItems: 'center', pl: 2, pr: 2, mb: 2 }}>
           <form onSubmit={handleSearch} style={{ width: '100%', display: 'flex', gap: 8 }}>
@@ -442,15 +632,20 @@ function App() {
             />
             {position && (
               <>
-                <Marker position={position}>
-                  <Popup>Your current location</Popup>
-                </Marker>
                 <Circle
                   center={position}
                   radius={20}
                   pathOptions={{ color: 'red', fillColor: 'red', fillOpacity: 0.5 }}
                 />
               </>
+            )}
+            {/* Show friend's position as blue circle (rendered after red circle) */}
+            {view === 'map' && friendPosition && (
+              <Circle
+                center={friendPosition}
+                radius={20}
+                pathOptions={{ color: 'blue', fillColor: 'blue', fillOpacity: 0.5 }}
+              />
             )}
             {Array.isArray(layerData[layer]) && layerData[layer].map(item => (
               <Marker key={item.id} position={item.position}>
@@ -494,8 +689,33 @@ function App() {
               </Marker>
             )}
             <UserMarker onAdd={setUserMarker} userMarker={userMarker} userMarkerRemoved={userMarkerRemoved} onRemoved={setUserMarkerRemoved} />
+            {/* Notification for incoming link request is now handled by Dialog */}
           </MapContainer>
         </Box>
+        {/* Link Request Modal */}
+        <Dialog open={showLinkDialog} onClose={handleRejectLink}>
+          <DialogTitle>Friend Link Request</DialogTitle>
+          <DialogContent>
+            <Typography>{pendingRequester} is trying to connect with you.</Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" color="primary" onClick={handleStartSharing}>Share My Position</Button>
+            <Button variant="outlined" color="error" onClick={handleRejectLink}>Reject Connecting</Button>
+          </DialogActions>
+        </Dialog>
+        {/* Approved Notification Modal */}
+        <Dialog open={showApprovedDialog} onClose={() => setShowApprovedDialog(false)}>
+          <DialogTitle>Friend Connected</DialogTitle>
+          <DialogContent>
+            <Typography>{approvedBy} approved your request</Typography>
+            {approvedByPosition && (
+              <Typography sx={{ mt: 1 }}>{approvedBy} position: [{approvedByPosition[0]}, {approvedByPosition[1]}]</Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button variant="contained" onClick={() => setShowApprovedDialog(false)}>OK</Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     );
   }
